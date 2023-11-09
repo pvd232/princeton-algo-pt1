@@ -19,12 +19,18 @@ public class KdTree {
         private Node left, right; // left and right subtrees
         private int size; // number of nodes in subtree
         private Node prev; // parent node
+        private RectHV lRect; // rectangle formed to left of node
+        private RectHV rRect; // rectangle formed to right of node
+        private Point2D[] seg;
 
-        public Node(double key, Point2D val, int size, Node prev) {
+        public Node(double key, Point2D val, int size, Node prev, RectHV lRect, RectHV rRect, Point2D[] seg) {
             this.key = key;
             this.val = val;
             this.size = size;
             this.prev = prev;
+            this.lRect = lRect;
+            this.rRect = rRect;
+            this.seg = seg;
         }
     }
 
@@ -61,8 +67,15 @@ public class KdTree {
     }
 
     private Node insert(Node node, Point2D p, int lvl) {
-        if (node == null)
-            return new Node(getKey(p, lvl), p, 1, null);
+        if (node == null) {
+            Node newNode = new Node(getKey(p, lvl), p, 1, null, null, null, null);
+            Point2D[] nodeSeg = getSeg(newNode, lvl);
+            newNode.seg = nodeSeg;
+            RectHV[] nodeRects = getRects(newNode, lvl, nodeSeg);
+            newNode.lRect = nodeRects[0];
+            newNode.rRect = nodeRects[0];
+            return newNode;
+        }
         int cmp = Double.compare(getKey(p, lvl), node.key);
         if (cmp < 0) {
             node.left = insert(node.left, p, lvl + 1);
@@ -170,7 +183,6 @@ public class KdTree {
                 StdDraw.show();
                 StdDraw.setPenRadius();
 
-                // Get updated bounds for line segment and draw segment with appropriate color
                 Point2D[] seg = getSeg(n, lvl);
                 if (lvl % 2 == 0)
                     StdDraw.setPenColor(StdDraw.RED);
@@ -190,7 +202,7 @@ public class KdTree {
         if (n.prev.left != null && n.prev.left.equals(n)) { // if point is left child, yMax is parent
             axisMax = getNonKey(n.prev.val, lvl);
             Node gP = n.prev.prev;
-            if (gP != null && gP.prev != null && getNonKey(gP.prev.val, lvl) <= getNonKey(n.val, lvl))
+            if (gP != null && gP.prev != null && getNonKey(gP.prev.val, lvl) < getNonKey(n.val, lvl))
                 // axisMin is great grandparent, or 0
                 axisMin = getNonKey(gP.prev.val, lvl);
             else
@@ -199,7 +211,7 @@ public class KdTree {
             axisMin = getNonKey(n.prev.val, lvl);
             Node gP = n.prev.prev;
             // axisMin is great grandparent, or 1
-            if (gP != null && gP.prev != null && getNonKey(gP.prev.val, lvl) >= getNonKey(n.val, lvl))
+            if (gP != null && gP.prev != null && getNonKey(gP.prev.val, lvl) > getNonKey(n.val, lvl))
                 axisMax = getNonKey(gP.prev.val, lvl);
             else
                 axisMax = 1;
@@ -211,29 +223,34 @@ public class KdTree {
             return new Point2D[] { new Point2D(axisMin, n.val.y()), new Point2D(axisMax, n.val.y()) };
     }
 
+    // Return rects formed by given node
+    private RectHV[] getRects(Node n, int lvl, Point2D[] seg) {
+        if (n.prev == null)
+            return new RectHV[] { new RectHV(0, 0, n.val.x(), 1), new RectHV(n.val.x(), 0, 1, 1) };
+
+        if (n.prev.prev == null)
+            return new RectHV[] { new RectHV(0, 0, n.prev.val.x(), n.val.y()),
+                    new RectHV(0, n.val.y(), n.prev.val.x(), 1) };
+
+        Point2D[] lPSeg = getParallelSeg(n, lvl, true, seg);
+        Point2D[] rPSeg = getParallelSeg(n, lvl, false, seg);
+        RectHV lRect = new RectHV(lPSeg[0].x(), lPSeg[0].y(), seg[1].x(), seg[1].y());
+        RectHV rRect = new RectHV(seg[0].x(), seg[0].y(), rPSeg[1].x(), rPSeg[1].y());
+        return new RectHV[] { lRect, rRect };
+
+    }
+
     private Point2D[] getParallelSeg(Node n, int lvl, boolean left, Point2D[] seg) {
-        if (n.prev == null) { // if prev is null, return line seg for root (x-axis)
-            if (left)
-                return new Point2D[] { new Point2D(0, 0), new Point2D(0, 1) };
-            else
-                return new Point2D[] { new Point2D(1, 0), new Point2D(1, 1) };
-        }
         Node gP = n.prev.prev;
-        if (gP == null) { // if gp node null, node is root child (will always follow this pattern)
-            if (left)
-                return new Point2D[] { new Point2D(0, 0), new Point2D(n.prev.val.x(), 0) };
-            else
-                return new Point2D[] { new Point2D(0, 1), new Point2D(n.prev.val.x(), 1) };
-        }
 
         double axisConst = 0;
         if (left) { // check if gp node key is valid, and if so, assign to parallel axis value
-            if (gP.key <= n.key)
+            if (gP.key < n.key)
                 axisConst = gP.key;
             else
                 axisConst = 0;
         } else {
-            if (gP.key >= n.key)
+            if (gP.key > n.key)
                 axisConst = gP.key;
             else
                 axisConst = 1;
@@ -253,28 +270,25 @@ public class KdTree {
         return res;
     }
 
-    private RectHV getRect(Point2D d1, Point2D d2) {
-        return new RectHV(d1.x(), d1.y(), d2.x(), d2.y());
-    }
-
     private void range(Node node, RectHV rect, ArrayList<Point2D> res, int lvl) {
         if (node == null)
             return;
         if (rect.contains(node.val))
             res.add(node.val);
 
-        Point2D[] seg = getSeg(node, lvl);
         // Only search left / right subtrees if rect could contain the point
-        if (rect.intersects(getRect(getParallelSeg(node, lvl, true, seg)[0], seg[1])))
+        if (rect.intersects(node.lRect))
             range(node.left, rect, res, lvl + 1);
 
-        if (rect.intersects(getRect(seg[0], getParallelSeg(node, lvl, false, seg)[1])))
+        if (rect.intersects(node.rRect))
             range(node.right, rect, res, lvl + 1);
     }
 
     public Point2D nearest(Point2D p) {
         if (p == null)
             throw new IllegalArgumentException();
+        if (root == null)
+            return null;
         // Use array as global(ish) pointer for helper function
         ArrayList<Point2D> res = new ArrayList<>();
         res.add(root.val);
@@ -293,11 +307,8 @@ public class KdTree {
             res.add(node.val);
         }
 
-        Point2D[] seg = getSeg(node, lvl);
-        double leftDist = getRect(getParallelSeg(node, lvl, true, seg)[0],
-                seg[1]).distanceSquaredTo(p);
-        double rightDist = getRect(seg[0], getParallelSeg(node, lvl, false,
-                seg)[1]).distanceSquaredTo(p);
+        double leftDist = node.lRect.distanceSquaredTo(p);
+        double rightDist = node.rRect.distanceSquaredTo(p);
 
         if (leftDist < cmpDist && rightDist < cmpDist) { // if both rectangles could have a closer point
             if (getKey(p, lvl) > node.key) { // if point is larger, search right node first
@@ -334,6 +345,7 @@ public class KdTree {
             testPoints.add(newPoint);
         }
         kdTree.draw();
+        StdDraw.show();
         assert !kdTree.isEmpty();
 
         assert count == kdTree.size();
@@ -349,34 +361,21 @@ public class KdTree {
         double minY = testPoints.get(0).y();
         double maxY = testPoints.get(testPoints.size() - 1).y();
         RectHV testRect = new RectHV(minX, minY, maxX, maxY);
-        StdDraw.setPenColor(StdDraw.CYAN);
-        testRect.draw();
-        StdDraw.show();
+        // StdDraw.setPenColor(StdDraw.CYAN);
+        // testRect.draw();
+        // StdDraw.show();
 
         Iterable<Point2D> testRange = kdTree.range(testRect);
         Iterator<Point2D> it = testRange.iterator();
 
         StdDraw.setPenColor(StdDraw.GREEN);
         StdDraw.setPenRadius(0.01);
-        int testRangeCount = 0;
-
         while (it.hasNext()) {
             // Draw points returned by range
             Point2D next = it.next();
             StdDraw.point(next.x(), next.y());
-            testRangeCount++;
         }
         StdDraw.show();
-
-        // Brute force test range
-        int bruteForceRangeCount = 0;
-        for (Point2D p : testRange) {
-            if (p.x() >= testRect.xmin() && p.x() <= testRect.xmax() && p.y() <= testRect.ymin()
-                    && p.y() >= testRect.ymax())
-                bruteForceRangeCount++;
-        }
-
-        assert testRangeCount == bruteForceRangeCount;
 
         Point2D testPoint = new Point2D(0.0, 0.0);
         Point2D testNearestPoint = kdTree.nearest(testPoint);

@@ -20,19 +20,13 @@ public class KdTree {
         private Point2D val; // associated data
         private Node left, right; // left and right subtrees
         private int size; // number of nodes in subtree
-        private Node prev; // parent node
-        private RectHV lRect; // rectangle formed to left of node
-        private RectHV rRect; // rectangle formed to right of node
-        private Point2D[] seg;
+        private RectHV qRect = null; // query aligned rect
 
-        public Node(double key, Point2D val, int size, Node prev, RectHV lRect, RectHV rRect, Point2D[] seg) {
+        public Node(double key, Point2D val, int size, RectHV qRect) {
             this.key = key;
             this.val = val;
             this.size = size;
-            this.prev = prev;
-            this.lRect = lRect;
-            this.rRect = rRect;
-            this.seg = seg;
+            this.qRect = qRect;
         }
     }
 
@@ -65,47 +59,27 @@ public class KdTree {
     public void insert(Point2D p) {
         if (p == null)
             throw new IllegalArgumentException();
-        root = insert(root, p, 0);
+        double xMin = 0, yMin = 0, xMax = 1, yMax = 1;
+        root = insert(root, p, 0, xMin, yMin, xMax, yMax);
     }
 
-    private Node insert(Node node, Point2D p, int lvl) {
-        if (node == null) {
-            Node newNode = new Node(getKey(p, lvl), p, 1, null, null, null, null);
-            Point2D[] nodeSeg = getSeg(newNode, lvl);
-            newNode.seg = nodeSeg;
-            RectHV[] nodeRects = getRects(newNode, lvl, nodeSeg);
-            newNode.lRect = nodeRects[0];
-            newNode.rRect = nodeRects[0];
-            return newNode;
-        }
+    private Node insert(Node node, Point2D p, int lvl, double xMin, double yMin, double xMax, double yMax) {
+        if (node == null)
+            return new Node(getKey(p, lvl), p, 1, new RectHV(xMin, yMin, xMax, yMax));
+
+        // Compare relevant key
         int cmp = Double.compare(getKey(p, lvl), node.key);
-        if (cmp < 0) {
-            node.left = insert(node.left, p, lvl + 1);
-            node.left.prev = node;
-        } else if (cmp > 0) {
-            node.right = insert(node.right, p, lvl + 1);
-            node.right.prev = node;
-        } else {
-            int otherCmp = Double.compare(getNonKey(p, lvl), getNonKey(node.val, lvl));
-            if (otherCmp < 0) {
-                node.left = insert(node.left, p, lvl + 1);
-                node.left.prev = node;
-            } else if (otherCmp > 0) {
-                node.right = insert(node.right, p, lvl + 1);
-                node.right.prev = node;
-            } else
-                node.val = p;
-        }
-
-        node.size = 1 + size(node.left) + size(node.right);
-        return node;
-    }
-
-    private double getNonKey(Point2D p, int lvl) {
-        if (lvl % 2 == 0)
-            return p.y();
+        if (cmp < 0) // If point is less than curr node, insert left
+            if (lvl % 2 == 0) // if curr node is x aligned, new node xMax will be current node's x
+                node.left = insert(node.left, p, lvl + 1, xMin, yMin, node.val.x(), yMax);
+            else // if curr node is y aligned, new node yMax will be current node's y
+                node.left = insert(node.left, p, lvl + 1, xMin, yMin, xMax, node.val.y());
+        else if (lvl % 2 == 0) // vice versa, inclusive of key being the same
+            node.right = insert(node.right, p, lvl + 1, node.val.x(), yMin, xMax, yMax); // xMin
         else
-            return p.x();
+            node.right = insert(node.right, p, lvl + 1, xMin, node.val.y(), xMax, yMax); // yMin
+        node.size = 1 + size(node.left) + size(node.right); // update size
+        return node;
     }
 
     private double getKey(Point2D p, int lvl) {
@@ -122,21 +96,15 @@ public class KdTree {
     }
 
     private boolean contains(Node node, Point2D p, int lvl) {
-        if (node == null)
+        if (node == null) // didnt find the node
             return false;
         int cmp = Double.compare(getKey(p, lvl), node.key);
-        if (cmp < 0)
+        if (cmp < 0) // if less than, go left
             return contains(node.left, p, lvl + 1);
-        else if (cmp > 0)
+        else if (node.val.equals(p)) // otherwise, if its the same return true, if not go right
+            return true;
+        else
             return contains(node.right, p, lvl + 1);
-        else {
-            int otherCmp = Double.compare(getNonKey(p, lvl), getNonKey(node.val, lvl));
-            if (otherCmp < 0)
-                return contains(node.left, p, lvl + 1);
-            else if (otherCmp > 0)
-                return contains(node.right, p, lvl + 1);
-        }
-        return node.val.equals(p);
 
     }
 
@@ -185,85 +153,16 @@ public class KdTree {
                 StdDraw.show();
                 StdDraw.setPenRadius();
 
-                Point2D[] seg = getSeg(n, lvl);
-                if (lvl % 2 == 0)
+                if (lvl % 2 == 0) {
                     StdDraw.setPenColor(StdDraw.RED);
-                else
+                    StdDraw.line(n.key, n.qRect.ymin(), n.key, n.qRect.ymax());
+                } else {
                     StdDraw.setPenColor(StdDraw.BLUE);
-                StdDraw.line(seg[0].x(), seg[0].y(), seg[1].x(), seg[1].y());
+                    StdDraw.line(n.qRect.xmin(), n.key, n.qRect.xmax(), n.key);
+                }
                 StdDraw.show();
             }
         }
-    }
-
-    // Return line segment for given node
-    private Point2D[] getSeg(Node n, int lvl) {
-        double axisMin = 0, axisMax = 1;
-        if (n.prev == null)
-            return new Point2D[] { new Point2D(n.val.x(), 0), new Point2D(n.val.x(), 1) };
-        if (n.prev.left != null && n.prev.left.equals(n)) { // if point is left child, yMax is parent
-            axisMax = getNonKey(n.prev.val, lvl);
-            Node gP = n.prev.prev;
-            if (gP != null && gP.prev != null && getNonKey(gP.prev.val, lvl) <= getNonKey(n.val, lvl))
-                // axisMin is great grandparent, or 0
-                axisMin = getNonKey(gP.prev.val, lvl);
-            else
-                axisMin = 0;
-        } else { // if point is right child, axisMin is parent
-            axisMin = getNonKey(n.prev.val, lvl);
-            Node gP = n.prev.prev;
-            // axisMin is great grandparent, or 1
-            if (gP != null && gP.prev != null && getNonKey(gP.prev.val, lvl) >= getNonKey(n.val, lvl))
-                axisMax = getNonKey(gP.prev.val, lvl);
-            else
-                axisMax = 1;
-
-        }
-        if (lvl % 2 == 0)
-            return new Point2D[] { new Point2D(n.val.x(), axisMin), new Point2D(n.val.x(), axisMax) };
-        else
-            return new Point2D[] { new Point2D(axisMin, n.val.y()), new Point2D(axisMax, n.val.y()) };
-    }
-
-    // Return rects formed by given node
-    private RectHV[] getRects(Node n, int lvl, Point2D[] seg) {
-        if (n.prev == null)
-            return new RectHV[] { new RectHV(0, 0, n.val.x(), 1), new RectHV(n.val.x(), 0, 1, 1) };
-
-        if (n.prev.prev == null)
-            return new RectHV[] { new RectHV(0, 0, n.prev.val.x(), n.val.y()),
-                    new RectHV(0, n.val.y(), n.prev.val.x(), 1) };
-
-        Point2D[] lPSeg = getParallelSeg(n, lvl, true, seg);
-        Point2D[] rPSeg = getParallelSeg(n, lvl, false, seg);
-        RectHV lRect = new RectHV(lPSeg[0].x(), lPSeg[0].y(), seg[1].x(), seg[1].y());
-        RectHV rRect = new RectHV(seg[0].x(), seg[0].y(), rPSeg[1].x(), rPSeg[1].y());
-        return new RectHV[] { lRect, rRect };
-
-    }
-
-    private Point2D[] getParallelSeg(Node n, int lvl, boolean left, Point2D[] seg) {
-        Node gP = n.prev.prev;
-
-        double axisConst = 0;
-        if (left) { // check if gp node key is valid, and if so, assign to parallel axis value
-            if (gP.key <= n.key)
-                axisConst = gP.key;
-            else
-                axisConst = 0;
-        } else {
-            if (gP.key >= n.key)
-                axisConst = gP.key;
-            else
-                axisConst = 1;
-        }
-
-        if (lvl % 2 == 0) // if x-axis node, y value changes while x is const
-            return new Point2D[] { new Point2D(axisConst, getNonKey(seg[0], lvl)),
-                    new Point2D(axisConst, getNonKey(seg[1], lvl)) };
-        else // vice-versa
-            return new Point2D[] { new Point2D(getNonKey(seg[0], lvl), axisConst),
-                    new Point2D(getNonKey(seg[1], lvl), axisConst) };
     }
 
     public Iterable<Point2D> range(RectHV rect) {
@@ -279,11 +178,11 @@ public class KdTree {
             res.add(node.val);
 
         // Only search left / right subtrees if rect could contain the point
-        if (rect.intersects(node.lRect))
+        if (node.right != null && node.right.qRect.intersects(rect))
             range(node.left, rect, res, lvl + 1);
 
-        if (rect.intersects(node.rRect))
-            range(node.right, rect, res, lvl + 1);
+        if (node.left != null && node.left.qRect.intersects(rect))
+            range(node.left, rect, res, lvl + 1);
     }
 
     public Point2D nearest(Point2D p) {
@@ -300,31 +199,29 @@ public class KdTree {
     }
 
     private void nearest(Point2D p, Node node, int lvl, ArrayList<Point2D> res) {
-        if (node == null)
-            return;
         double cmpDist = node.val.distanceSquaredTo(p);
-        if (cmpDist < res.get(0).distanceSquaredTo(p)) { // If curr point is closer, clear old point and replace with
-                                                         // new
+        if (cmpDist < res.get(0).distanceSquaredTo(p)) { // If curr point is closer, replace with new
             res.clear();
             res.add(node.val);
         }
-
-        double leftDist = node.lRect.distanceSquaredTo(p);
-        double rightDist = node.rRect.distanceSquaredTo(p);
-
-        if (leftDist < cmpDist && rightDist < cmpDist) { // if both rectangles could have a closer point
-            if (getKey(p, lvl) > node.key) { // if point is larger, search right node first
-                nearest(p, node.right, lvl + 1, res);
+        if (node.right == null || node.left == null) {
+            if (node.left != null && node.left.qRect.distanceSquaredTo(p) < cmpDist)
                 nearest(p, node.left, lvl + 1, res);
-            } else { // otherwise search left node
-                nearest(p, node.left, lvl + 1, res);
+            if (node.right != null && node.right.qRect.distanceSquaredTo(p) < cmpDist)
                 nearest(p, node.right, lvl + 1, res);
+        } else {
+            double leftDist = node.left.qRect.distanceSquaredTo(p);
+            double rightDist = node.right.qRect.distanceSquaredTo(p);
+
+            if (leftDist < cmpDist && rightDist < cmpDist) { // if both rectangles could have a closer point
+                if (getKey(p, lvl) > node.key) { // if point is larger, search right node first
+                    nearest(p, node.right, lvl + 1, res);
+                    nearest(p, node.left, lvl + 1, res);
+                } else { // otherwise search left node
+                    nearest(p, node.left, lvl + 1, res);
+                    nearest(p, node.right, lvl + 1, res);
+                }
             }
-        } else { // otherwise check each child node individually
-            if (node.left != null && leftDist < cmpDist)
-                nearest(p, node.left, lvl + 1, res);
-            if (node.right != null && rightDist < cmpDist)
-                nearest(p, node.right, lvl + 1, res);
         }
     }
 
