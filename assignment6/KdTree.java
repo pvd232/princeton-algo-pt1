@@ -295,7 +295,6 @@ public class KdTree {
                 if (tmpDist < dist) {
                     dist = tmpDist;
                     bruteTestNearestPoint = p.val;
-
                 }
             }
         }
