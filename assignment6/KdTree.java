@@ -65,22 +65,19 @@ public class KdTree {
         if (node == null)
             return new Node(getKey(p, lvl), p, 1, new RectHV(xMin, yMin, xMax, yMax));
 
-        // Compare relevant key
-        int cmp = Double.compare(getKey(p, lvl), node.key);
+        int cmp = Double.compare(getKey(p, lvl), node.key); // Compare relevant key
         if (cmp < 0) // If point is less than curr node, insert left
             if (lvl % 2 == 0) // if curr node is x aligned, new node xMax will be current node's x
                 node.left = insert(node.left, p, lvl + 1, xMin, yMin, node.val.x(), yMax);
             else // if curr node is y aligned, new node yMax will be current node's y
                 node.left = insert(node.left, p, lvl + 1, xMin, yMin, xMax, node.val.y());
+        else if (node.val.equals(p)) // otherwise, if they are equal
+            return node;
+        else if (lvl % 2 == 0) // If node > current node and x-aligned
+            node.right = insert(node.right, p, lvl + 1, node.val.x(), yMin, xMax, yMax); // xMin
+        else
+            node.right = insert(node.right, p, lvl + 1, xMin, node.val.y(), xMax, yMax); // yMin
 
-        else {
-            if (node.val.equals(p))
-                return node;
-            else if (lvl % 2 == 0) // vice versa, inclusive of key being the same
-                node.right = insert(node.right, p, lvl + 1, node.val.x(), yMin, xMax, yMax); // xMin
-            else
-                node.right = insert(node.right, p, lvl + 1, xMin, node.val.y(), xMax, yMax); // yMin
-        }
         node.size = 1 + size(node.left) + size(node.right); // update size
         return node;
     }
@@ -104,9 +101,9 @@ public class KdTree {
         int cmp = Double.compare(getKey(p, lvl), node.key);
         if (cmp < 0) // if less than, go left
             return contains(node.left, p, lvl + 1);
-        else if (node.val.equals(p)) // otherwise, if its the same return true, if not go right
+        else if (node.val.equals(p)) // otherwise, if its the same return true
             return true;
-        else
+        else // if not equal go right
             return contains(node.right, p, lvl + 1);
 
     }
@@ -172,6 +169,8 @@ public class KdTree {
         if (rect == null)
             throw new IllegalArgumentException();
         ArrayList<Point2D> res = new ArrayList<>();
+        if (root == null)
+            return res;
         range(root, rect, res, 0); // set default max to unit square boundaries
         return res;
     }
@@ -194,42 +193,43 @@ public class KdTree {
             throw new IllegalArgumentException();
         if (root == null)
             return null;
-        return nearest(p, root, 0, root.val);
+        return nearest(p, root, root.val, 0);
     }
 
-    private Point2D nearest(Point2D p, Node node, int lvl, Point2D closest) {
-        if (node.qRect.distanceSquaredTo(p) >= closest.distanceSquaredTo(p))
+    private Point2D nearest(Point2D queryPoint, Node node, Point2D closest, int depth) {
+        if (node == null)
             return closest;
 
-        double cmpDist = node.val.distanceSquaredTo(p);
-        double currDist = Math.min(closest.distanceSquaredTo(p), cmpDist);
+        // Distance from the query point to the closest point found so far
+        double closestDist = closest.distanceSquaredTo(queryPoint);
 
-        if (currDist == cmpDist)
+        // If curr node's rect is further away curr closest point, prune this branch
+        if (node.qRect.distanceSquaredTo(queryPoint) >= closestDist)
+            return closest;
+
+        // Check if the current node is closer than the closest point found so far
+        double nodeDist = node.val.distanceSquaredTo(queryPoint);
+        if (nodeDist < closestDist) {
             closest = node.val;
-        if (node.left != null && node.right != null) {
-            double leftDist = node.left.qRect.distanceSquaredTo(p);
-            double rightDist = node.right.qRect.distanceSquaredTo(p);
-
-            if (leftDist < currDist && rightDist < currDist) { // if both rectangles could have a closer point
-                if (getKey(p, lvl) > node.key) { // if point is larger, search right node first
-                    closest = nearest(p, node.right, lvl + 1, closest);
-                    closest = nearest(p, node.left, lvl + 1, closest);
-                } else { // otherwise search left node
-                    closest = nearest(p, node.left, lvl + 1, closest);
-                    closest = nearest(p, node.right, lvl + 1, closest);
-                }
-            } else {
-                if (node.left.qRect.distanceSquaredTo(p) < currDist)
-                    closest = nearest(p, node.left, lvl + 1, closest);
-                if (node.right.qRect.distanceSquaredTo(p) < cmpDist)
-                    closest = nearest(p, node.right, lvl + 1, closest);
-            }
-        } else {
-            if (node.left != null && node.left.qRect.distanceSquaredTo(p) < currDist)
-                closest = nearest(p, node.left, lvl + 1, closest);
-            else if (node.right != null && node.right.qRect.distanceSquaredTo(p) < currDist)
-                closest = nearest(p, node.right, lvl + 1, closest);
+            closestDist = nodeDist;
         }
+
+        // Determine whether to go left or right first
+        Node firstNode = node.left;
+        Node secondNode = node.right;
+
+        // Comparing using x-coordinate if depth is even, y-coordinate if depth is odd.
+        boolean compareX = (depth % 2 == 0);
+        if ((compareX && queryPoint.x() > node.val.x()) || (!compareX && queryPoint.y() > node.val.y())) {
+            firstNode = node.right;
+            secondNode = node.left;
+        }
+
+        // Explore the side of the splitting plane that the query point lies on first.
+        closest = nearest(queryPoint, firstNode, closest, depth + 1);
+
+        // After first side, check the other side, which will be pruned if necessary
+        closest = nearest(queryPoint, secondNode, closest, depth + 1);
         return closest;
     }
 
@@ -250,8 +250,6 @@ public class KdTree {
             double y = in.readDouble();
             Point2D newPoint = new Point2D(x, y);
             kdTree.insert(newPoint);
-            System.out.println("count " + count);
-            System.out.println("kdTree.size() " + kdTree.size());
             assert count >= kdTree.size();
             testPoints.add(newPoint);
         }
@@ -270,9 +268,9 @@ public class KdTree {
         double minY = testPoints.get(0).y();
         double maxY = testPoints.get(testPoints.size() - 1).y();
         RectHV testRect = new RectHV(minX, minY, maxX, maxY);
-        // StdDraw.setPenColor(StdDraw.CYAN);
-        // testRect.draw();
-        // StdDraw.show();
+        StdDraw.setPenColor(StdDraw.CYAN);
+        testRect.draw();
+        StdDraw.show();
 
         Iterable<Point2D> testRange = kdTree.range(testRect);
         Iterator<Point2D> it = testRange.iterator();
